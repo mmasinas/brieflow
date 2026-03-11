@@ -924,6 +924,7 @@ def load_aligned_tiff(file_path: str, channel: int = 0) -> Optional[np.ndarray]:
     Optional[np.ndarray]
         Loaded image array, or None if loading fails
     """
+
     try:
         image = io.imread(file_path)
 
@@ -931,6 +932,13 @@ def load_aligned_tiff(file_path: str, channel: int = 0) -> Optional[np.ndarray]:
             return image
         elif len(image.shape) == 3:
             return image[min(channel, image.shape[0] - 1), :, :]
+        elif len(image.shape) == 4:
+            # NOTE: I added this part
+            # Multi-cycle, multi-channel image (cycles, H, W, channels)
+            # Extract first cycle (index 0) and specified channel
+            cycle_idx = 0  # Always use first cycle for stitching
+            channel_idx = min(channel, image.shape[3] - 1)
+            return image[cycle_idx, :, :, channel_idx]
         else:
             raise ValueError(f"Unexpected image dimensions: {image.shape}")
 

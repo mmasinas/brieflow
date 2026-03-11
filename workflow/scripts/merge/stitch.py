@@ -124,6 +124,11 @@ if mask_files:
         # Extract cell positions
         if stitched_mask.max() > 0:
             print("Extracting cell positions...")
+            print("\n\n")
+            print("I AM HERE")
+            print("stitched_mask", stitched_mask.shape)
+            print(stitched_mask)
+            print("\n\n")
             cell_positions = extract_cell_positions_from_stitched_mask(
                 stitched_mask=stitched_mask,
                 well=well,

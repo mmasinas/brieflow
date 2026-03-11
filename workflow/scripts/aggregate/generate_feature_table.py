@@ -21,7 +21,7 @@ control_key = snakemake.params.control_key
 # Load cell data using PyArrow dataset
 print("Loading cell data")
 cell_data = ds.dataset(snakemake.input.filtered_paths, format="parquet")
-
+print("snakemake.input.filtered_paths: ", snakemake.input.filtered_paths)
 # determine cols
 cell_data_cols = cell_data.schema.names
 metadata_cols = load_metadata_cols(snakemake.params.metadata_cols_fp, True)
@@ -32,6 +32,13 @@ print(
     f"Number of metadata columns: {len(metadata_cols)} | Number of feature columns: {len(feature_cols)}"
 )
 
+# NOTE: I added this to replace default i_0/1 and j_0/1 to global_i_0/1 and global_j_0/1 respectively
+metadata_cols = ["global_i_0" if item == "i_0" else item for item in metadata_cols]
+metadata_cols = ["global_i_1" if item == "i_1" else item for item in metadata_cols]
+metadata_cols = ["global_j_0" if item == "j_0" else item for item in metadata_cols]
+metadata_cols = ["global_j_1" if item == "j_1" else item for item in metadata_cols]
+# NOTE: the script still fails, looking for 'class' and 'confidence' columns in the parquet file. As temporary fix,
+# I manually added those columns and set default values. See: OPS_load_parquet_file_aggregate.ipynb file
 # load cell data and convert numerical columns to float32
 cell_data = cell_data.to_table(
     columns=metadata_cols + feature_cols, use_threads=True, memory_pool=None

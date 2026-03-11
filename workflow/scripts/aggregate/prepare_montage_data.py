@@ -19,8 +19,12 @@ montage_columns = [
     "plate",
     "well",
     "tile",
-    "i_0",
-    "j_0",
+    "nucleus_i", # NOTE: update this from i_0 to global_i_0 / nucleus_i
+    "nucleus_j",  # NOTE: update this from j_0 to global_j_0/ nucleus_j
+    "cell_bounds_0",  # Pre-calculated bounds
+    "cell_bounds_1",
+    "cell_bounds_2",
+    "cell_bounds_3",
 ]
 
 cell_data = ds.dataset(snakemake.input, format="parquet")

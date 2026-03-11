@@ -26,8 +26,11 @@ from lib.merge.fast_merge import build_linear_model
 def plot_combined_tile_grid(
     ph_metadata,
     sbs_metadata,
-    ph_image_dims=(2960, 2960),
-    sbs_image_dims=(1480, 1480),
+    # ph_image_dims=(2960, 2960),
+    # sbs_image_dims=(1480, 1480),
+    # NOTE: I changed the defaults
+    ph_image_dims=(1080, 1080),
+    sbs_image_dims=(1080, 1080),
     figsize=None,
 ):
     """Plots a combined grid of X-Y positions for PH and SBS datasets as rectangles.
@@ -61,6 +64,8 @@ def plot_combined_tile_grid(
         sbs_tile_size = sbs_image_dims[0] * sbs_metadata["pixel_size_x"].iloc[0]
     else:
         sbs_tile_size = _estimate_tile_size_from_coords(sbs_metadata)
+    print("ph_tile_size: ", ph_tile_size)
+    print("sbs_tile_size: ", sbs_tile_size)
 
     # Auto-calculate figure size based on data extent
     all_x = pd.concat([ph_metadata["x_pos"], sbs_metadata["x_pos"]])
@@ -77,7 +82,8 @@ def plot_combined_tile_grid(
     # Draw PH tiles as rectangles with labels
     for _, row in ph_metadata.iterrows():
         rect = mpatches.Rectangle(
-            (row["x_pos"], row["y_pos"]),
+            # (row["x_pos"], row["y_pos"]),
+            (row["x_pos"] - ph_tile_size / 2, row["y_pos"] - ph_tile_size / 2),
             ph_tile_size,
             ph_tile_size,
             linewidth=0.5,
@@ -88,8 +94,10 @@ def plot_combined_tile_grid(
         ax.add_patch(rect)
         # Label centered in tile
         ax.text(
-            row["x_pos"] + ph_tile_size / 2,
-            row["y_pos"] + ph_tile_size / 2,
+            # row["x_pos"] + ph_tile_size / 2,
+            # row["y_pos"] + ph_tile_size / 2,
+            row["x_pos"],
+            row["y_pos"],
             str(int(row["tile"])),
             ha="center",
             va="center",
@@ -100,18 +108,21 @@ def plot_combined_tile_grid(
     # Draw SBS tiles as rectangles with labels
     for _, row in sbs_metadata.iterrows():
         rect = mpatches.Rectangle(
-            (row["x_pos"], row["y_pos"]),
+            # (row["x_pos"], row["y_pos"]),
+            (row["x_pos"] - sbs_tile_size / 2, row["y_pos"] - sbs_tile_size / 2),
             sbs_tile_size,
             sbs_tile_size,
-            linewidth=0.5,
+            linewidth=1,
             edgecolor="darkred",
             facecolor="red",
             alpha=0.4,
         )
         ax.add_patch(rect)
         ax.text(
-            row["x_pos"] + sbs_tile_size / 2,
-            row["y_pos"] + sbs_tile_size / 2,
+            # row["x_pos"] + sbs_tile_size / 2,
+            # row["y_pos"] + sbs_tile_size / 2,
+            row["x_pos"],
+            row["y_pos"] + 0.0001,
             str(int(row["tile"])),
             ha="center",
             va="center",
@@ -373,12 +384,16 @@ def preview_mask_transformations(
     print(f"Transformation: flipud={flipud}, fliplr={fliplr}, rot90={rot90}")
 
     # --- determine pixel scaling from metadata or fallback ---
-    if data_type == "sbs":
-        tile_size = (1200, 1200)
-        fov_um = 1560.0
-    else:
-        tile_size = (2400, 2400)
-        fov_um = 260.0
+    # NOTE: comment out this part; tile_size is the same for sbs and phenotype on our dataset; not sure what fov_um is
+    # if data_type == "sbs":
+    #     tile_size = (1200, 1200)
+    #     fov_um = 1560.0 # not sure what to replace this with
+    # else:
+    #     tile_size = (2400, 2400)
+    #     fov_um = 260.0  # not sure what to replace this with
+    # Replaced about with this just in case; but it's not really needed/used since 'pixel_size_x' is available in metadata
+    tile_size = (1080, 1080)
+    fov_um = 1560.0 # not sure what to set this to, just copied value from original sbs default
 
     # Use pixel size from metadata if available
     if "pixel_size_x" in first_tiles.columns and "pixel_size_y" in first_tiles.columns:

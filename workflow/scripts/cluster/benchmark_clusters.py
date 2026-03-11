@@ -24,7 +24,7 @@ for col in feature_cols:
 
 phate_leiden_clustering_shuffled = phate_leiden_pipeline(
     shuffled_aggregated_data,
-    int(snakemake.params.leiden_resolution),
+    float(snakemake.params.leiden_resolution),
     snakemake.params.phate_distance_metric,
 )
 
@@ -33,51 +33,52 @@ cluster_datasets = {
     "Shuffled": phate_leiden_clustering_shuffled,
 }
 
-string_pair_benchmark = pd.read_csv(snakemake.params.string_pair_benchmark_fp, sep="\t")
-pair_recall_benchmarks = {
-    "STRING": string_pair_benchmark,
-}
-
-corum_group_benchmark = pd.read_csv(snakemake.params.corum_group_benchmark_fp, sep="\t")
-kegg_group_benchmark = pd.read_csv(snakemake.params.kegg_group_benchmark_fp, sep="\t")
-group_enrichment_benchmarks = {
-    "CORUM": filter_complexes(
-        corum_group_benchmark,
-        phate_leiden_clustering,
-        snakemake.params.perturbation_name_col,
-        snakemake.params.control_key,
-    ),
-    "KEGG": filter_complexes(
-        kegg_group_benchmark,
-        phate_leiden_clustering,
-        snakemake.params.perturbation_name_col,
-        snakemake.params.control_key,
-    ),
-}
-
-(
-    integrated_results,
-    combined_tables,
-    global_metrics,
-    enrichment_pie_charts,
-    enrichment_bar_charts,
-) = run_benchmark_analysis(
-    cluster_datasets,
-    string_pair_benchmark,
-    corum_group_benchmark,
-    kegg_group_benchmark,
-    snakemake.params.perturbation_name_col,
-    snakemake.params.control_key,
-)
-
-# Save the results
-save_json_results(integrated_results["Real"], snakemake.output[0])
-save_json_results(integrated_results["Shuffled"], snakemake.output[1])
-combined_tables["Real"].to_csv(snakemake.output[2], sep="\t", index=False)
-combined_tables["Shuffled"].to_csv(snakemake.output[3], sep="\t", index=False)
-save_json_results(global_metrics["Real"], snakemake.output[4])
-save_json_results(global_metrics["Shuffled"], snakemake.output[5])
-enrichment_pie_charts["Real"].savefig(snakemake.output[6])
-enrichment_pie_charts["Shuffled"].savefig(snakemake.output[7])
-enrichment_bar_charts["Real"].savefig(snakemake.output[8])
-enrichment_bar_charts["Shuffled"].savefig(snakemake.output[9])
+# NOTE: skip lines below for now as they are throwing errors that cannot be fixed/avoided due to small dataset
+# string_pair_benchmark = pd.read_csv(snakemake.params.string_pair_benchmark_fp, sep="\t")
+# pair_recall_benchmarks = {
+#     "STRING": string_pair_benchmark,
+# }
+#
+# corum_group_benchmark = pd.read_csv(snakemake.params.corum_group_benchmark_fp, sep="\t")
+# kegg_group_benchmark = pd.read_csv(snakemake.params.kegg_group_benchmark_fp, sep="\t")
+# group_enrichment_benchmarks = {
+#     "CORUM": filter_complexes(
+#         corum_group_benchmark,
+#         phate_leiden_clustering,
+#         snakemake.params.perturbation_name_col,
+#         snakemake.params.control_key,
+#     ),
+#     "KEGG": filter_complexes(
+#         kegg_group_benchmark,
+#         phate_leiden_clustering,
+#         snakemake.params.perturbation_name_col,
+#         snakemake.params.control_key,
+#     ),
+# }
+#
+# (
+#     integrated_results,
+#     combined_tables,
+#     global_metrics,
+#     enrichment_pie_charts,
+#     enrichment_bar_charts,
+# ) = run_benchmark_analysis(
+#     cluster_datasets,
+#     string_pair_benchmark,
+#     corum_group_benchmark,
+#     kegg_group_benchmark,
+#     snakemake.params.perturbation_name_col,
+#     snakemake.params.control_key,
+# )
+#
+# # Save the results
+# save_json_results(integrated_results["Real"], snakemake.output[0])
+# save_json_results(integrated_results["Shuffled"], snakemake.output[1])
+# combined_tables["Real"].to_csv(snakemake.output[2], sep="\t", index=False)
+# combined_tables["Shuffled"].to_csv(snakemake.output[3], sep="\t", index=False)
+# save_json_results(global_metrics["Real"], snakemake.output[4])
+# save_json_results(global_metrics["Shuffled"], snakemake.output[5])
+# enrichment_pie_charts["Real"].savefig(snakemake.output[6])
+# enrichment_pie_charts["Shuffled"].savefig(snakemake.output[7])
+# enrichment_bar_charts["Real"].savefig(snakemake.output[8])
+# enrichment_bar_charts["Shuffled"].savefig(snakemake.output[9])

@@ -112,18 +112,28 @@ def plot_feature_distributions(
     df_orig = original_cell_data[["plate", "well"] + original_feature_cols].melt(
         id_vars=["plate", "well"], var_name="Feature", value_name="Value"
     )
-    df_orig["plate_well"] = (
-        df_orig["plate"].astype(int).astype(str) + "_" + df_orig["well"]
-    )
+    try:
+        df_orig["plate_well"] = (
+                df_orig["plate"].astype(int).astype(str) + "_" + df_orig["well"]
+        )
+    except ValueError: # add exception for non-numeric Plate cases
+        df_orig["plate_well"] = (
+                df_orig["plate"].astype(str) + "_" + df_orig["well"]
+        )
     df_orig["Type"] = "Original"
 
     # Melt aligned features
     df_aligned = aligned_cell_data[["plate", "well"] + aligned_feature_cols].melt(
         id_vars=["plate", "well"], var_name="Feature", value_name="Value"
     )
-    df_aligned["plate_well"] = (
-        df_aligned["plate"].astype(int).astype(str) + "_" + df_aligned["well"]
-    )
+    try:
+        df_aligned["plate_well"] = (
+            df_aligned["plate"].astype(int).astype(str) + "_" + df_aligned["well"]
+        )
+    except ValueError:  # add exception for non-numeric Plate cases
+        df_aligned["plate_well"] = (
+                df_aligned["plate"].astype(str) + "_" + df_aligned["well"]
+        )
     df_aligned["Type"] = "Aligned"
 
     # Clip outliers to 1st–99th percentiles

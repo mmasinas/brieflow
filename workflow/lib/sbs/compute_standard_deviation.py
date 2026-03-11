@@ -24,6 +24,10 @@ def compute_standard_deviation(log_filtered_data, remove_index=None):
         log_filtered_data = log_filtered_data[:, None, ...]
 
     # Compute standard deviation across cycles and mean across channels
+    ## cycle count > 1
     consensus = np.std(log_filtered_data, axis=0).mean(axis=0)
+
+    # ## cycle count == 1; get average signal across channels instead
+    # consensus = log_filtered_data.mean(axis=1).squeeze(0)
 
     return consensus
