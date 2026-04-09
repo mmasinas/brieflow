@@ -124,6 +124,7 @@ if mask_files:
         # Extract cell positions
         if stitched_mask.max() > 0:
             print("Extracting cell positions...")
+            print("\tstitched_mask", stitched_mask.min(), stitched_mask.mean(), stitched_mask.max(), stitched_mask.shape)
             cell_positions = extract_cell_positions_from_stitched_mask(
                 stitched_mask=stitched_mask,
                 well=well,
@@ -139,6 +140,7 @@ if mask_files:
             cell_positions = pd.DataFrame()
     except Exception as e:
         print(f"Mask stitching failed: {e}")
+        print("stitched_image", stitched_image)
         stitched_mask = np.zeros(stitched_image.shape, dtype=np.uint16)
         cell_positions = pd.DataFrame()
 else:

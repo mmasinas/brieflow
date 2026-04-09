@@ -25,6 +25,7 @@ merge_formatted = merge_formatted.pipe(
     fov_distance, i="i_1", j="j_1", dimensions=sbs_dimensions, suffix="_1"
 )
 
+print("sbs_cells", sbs_cells.columns)
 # Identify single gene mappings in SBS
 sbs_cells["mapped_single_gene"] = sbs_cells.apply(
     lambda x: identify_single_gene_mappings(x), axis=1
@@ -41,8 +42,8 @@ merge_formatted = merge_formatted.merge(
             "gene_symbol_0",
             "cell_barcode_1",
             "gene_symbol_1",
-            "no_recomb_0",
-            "no_recomb_1",
+            # "no_recomb_0",
+            # "no_recomb_1",
             "mapped_single_gene",
         ]
     ].rename({"tile": "site", "cell": "cell_1"}, axis=1),

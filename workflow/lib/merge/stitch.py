@@ -73,7 +73,7 @@ def assemble_aligned_tiff_well(
 
     first_tile = augment_tile(first_tile, flipud, fliplr, rot90)
     tile_size = first_tile.shape
-    print(f"Detected tile size: {tile_size}")
+    print(f"Detected tile size (assemble_aligned_tiff_well): {tile_size}")
 
     # Calculate output dimensions and initialize arrays
     final_shape = get_output_shape_tiff(shifts, tile_size)
@@ -165,7 +165,7 @@ def assemble_stitched_masks(
         first_mask = first_mask[0] if first_mask.shape[0] == 1 else first_mask
     first_mask = augment_tile(first_mask, flipud, fliplr, rot90)
     tile_height, tile_width = first_mask.shape
-    print(f"Detected tile size: {tile_height} x {tile_width}")
+    print(f"Detected tile size (assemble_stitched_masks): {tile_height} x {tile_width}")
 
     # Calculate canvas size
     max_x = max_y = 0
@@ -343,6 +343,7 @@ def extract_cell_positions_from_stitched_mask(
         cell_data.append(cell_info)
 
     df = pd.DataFrame(cell_data)
+    print("df", df, df.shape)
 
     # Ensure correct data types
     if len(df) > 0:
@@ -901,10 +902,13 @@ def augment_tile(
         Transformed tile array
     """
     if flipud:
+        print("FLIPUD")
         tile = np.flip(tile, axis=-2)
     if fliplr:
+        print("FLIPLR")
         tile = np.flip(tile, axis=-1)
     if rot90:
+        print("FLIPUD")
         tile = np.rot90(tile, k=rot90, axes=(-2, -1))
     return tile
 
@@ -926,11 +930,23 @@ def load_aligned_tiff(file_path: str, channel: int = 0) -> Optional[np.ndarray]:
     """
     try:
         image = io.imread(file_path)
-
+        print("\nfile_path", file_path, "shape", image.shape)
         if len(image.shape) == 2:
             return image
         elif len(image.shape) == 3:
+            # phenotype image shape is (1080,1080,3)
+            print(f"\timage_shape_len=3, channel={channel}, image.shape[0]={image.shape[0]}, returning shape: {image[min(channel, image.shape[0] - 1), :, :].shape}")
             return image[min(channel, image.shape[0] - 1), :, :]
+        elif len(image.shape) == 4:
+            # MM: updated this part due to error encountered when running the 6th module
+            # Multi-cycle, multi-channel image (cycles, channels, H, W)
+            # Extract first cycle (index 0) and specified channel
+            cycle_idx = 0  # First cycle
+            channel_idx = min(channel, image.shape[0] - 1)  # Index into dimension 1 (channels)
+            print("\tmulti-cycle data: cycle_idx:", cycle_idx, "channel_idx:", channel_idx)
+            print(
+                f"\timage_shape_len=4, channel={channel}, image.shape[0]={image.shape[0]}, returning shape: {image[cycle_idx, channel_idx, :, :].shape}")
+            return image[cycle_idx, channel_idx, :, :]  # should return (1080, 1080)
         else:
             raise ValueError(f"Unexpected image dimensions: {image.shape}")
 
