@@ -74,10 +74,10 @@ def plot_combined_tile_grid(
 
     fig, ax = plt.subplots(figsize=figsize, dpi=300)
 
-    # Draw PH tiles as rectangles with labels
+    # Draw PH tiles
     for _, row in ph_metadata.iterrows():
         rect = mpatches.Rectangle(
-            (row["x_pos"], row["y_pos"]),
+            (row["x_pos"] - ph_tile_size / 2, row["y_pos"] - ph_tile_size / 2),  # center → corner
             ph_tile_size,
             ph_tile_size,
             linewidth=0.5,
@@ -86,10 +86,9 @@ def plot_combined_tile_grid(
             alpha=0.7,
         )
         ax.add_patch(rect)
-        # Label centered in tile
         ax.text(
-            row["x_pos"] + ph_tile_size / 2,
-            row["y_pos"] + ph_tile_size / 2,
+            row["x_pos"] + sbs_tile_size * 0.09,  # center is just x_pos directly now
+            row["y_pos"] + sbs_tile_size * 0.1,
             str(int(row["tile"])),
             ha="center",
             va="center",
@@ -97,23 +96,23 @@ def plot_combined_tile_grid(
             color="black",
         )
 
-    # Draw SBS tiles as rectangles with labels
+    # Draw SBS tiles
     for _, row in sbs_metadata.iterrows():
         rect = mpatches.Rectangle(
-            (row["x_pos"], row["y_pos"]),
+            (row["x_pos"] - sbs_tile_size / 2, row["y_pos"] - sbs_tile_size / 2),  # center → corner
             sbs_tile_size,
             sbs_tile_size,
-            linewidth=0.5,
+            linewidth=2.0,
             edgecolor="darkred",
             facecolor="red",
             alpha=0.4,
         )
         ax.add_patch(rect)
         ax.text(
-            row["x_pos"] + sbs_tile_size / 2,
-            row["y_pos"] + sbs_tile_size / 2,
+            row["x_pos"],  # center is just x_pos directly now
+            row["y_pos"],
             str(int(row["tile"])),
-            ha="center",
+            ha="left",
             va="center",
             fontsize=_auto_fontsize(sbs_tile_size, x_range),
             color="darkred",

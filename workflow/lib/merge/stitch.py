@@ -926,11 +926,22 @@ def load_aligned_tiff(file_path: str, channel: int = 0) -> Optional[np.ndarray]:
     """
     try:
         image = io.imread(file_path)
-
+        print("\nfile_path", file_path, "shape", image.shape)
         if len(image.shape) == 2:
             return image
         elif len(image.shape) == 3:
+            print(
+                f"\timage_shape_len=3, channel={channel}, image.shape[0]={image.shape[0]}, returning shape: {image[min(channel, image.shape[0] - 1), :, :].shape}")
             return image[min(channel, image.shape[0] - 1), :, :]
+        elif len(image.shape) == 4:
+            # MM: updated this part due to error encountered when running the 6th module
+            # Multi-cycle, multi-channel image (cycles, channels, H, W)
+            # Extract first cycle (index 0) and specified channel
+            cycle_idx = 0  # First cycle
+            channel_idx = min(channel, image.shape[0] - 1)  # Index into dimension 1 (channels)
+            print("\tmulti-cycle data: cycle_idx:", cycle_idx, "channel_idx:", channel_idx)
+            print(f"\timage_shape_len=4, channel={channel}, image.shape[0]={image.shape[0]}, returning shape: {image[cycle_idx, channel_idx, :, :].shape}")
+            return image[cycle_idx, channel_idx, :, :]  # should return (1080, 1080)
         else:
             raise ValueError(f"Unexpected image dimensions: {image.shape}")
 

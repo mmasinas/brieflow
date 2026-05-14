@@ -25,11 +25,91 @@ from lib.sbs.constants import (
 )
 
 
+# Define 2-color chemistry base mapping
+def decode_2color_to_bases(df_bases, cy3_threshold, cy5_threshold, baseline):
+    """Convert 2-color intensity data to 4-channel base calls.
+
+    This converts 2-color combinatorial data into the 4-channel format
+    that brieflow expects (G, T, A, C channels).
+    """
+
+    # Get ID columns (excluding channel and intensity)
+    id_cols = [col for col in df_bases.columns if col not in ['channel', 'intensity']]
+
+    # Pivot to get Cy3 and Cy5 intensities side by side
+    df_pivot = df_bases.pivot_table(
+        index=id_cols,
+        columns='channel',
+        values='intensity',
+        aggfunc='first'
+    ).reset_index()
+
+    # Create 4 separate rows for each read/cycle (one per base channel)
+    records = []
+    for idx, row in df_pivot.iterrows():
+        # Get the base dictionary with all ID columns
+        base_dict = {col: row[col] for col in id_cols}
+
+        # Determine base call based on thresholds
+        m_on = row['Cy3'] >= cy3_threshold
+        c_on = row['Cy5'] >= cy5_threshold
+
+        # Determine which base and assign intensities
+        if m_on and c_on:  # A (both on)
+            intensities = {
+                'A': max(row['Cy3'], row['Cy5']),
+                'T': baseline,
+                'C': baseline,
+                'G': 0,
+            }
+        elif m_on and not c_on:  # T (Cy3 only)
+            intensities = {
+                'A': baseline,
+                'T': row['Cy3'],
+                'C': 0,
+                'G': 0
+            }
+        elif not m_on and c_on:  # C (Cy5 only)
+            intensities = {
+                'A': baseline,
+                'T': 0,
+                'C': row['Cy5'],
+                'G': 0
+            }
+        else:  # G (both off)
+            intensities = {
+                'A': 0,
+                'T': 0,
+                'C': 0,
+                'G': max(row['Cy3'], row['Cy5'])
+            }
+
+        # CRITICAL: Create rows in the EXACT order brieflow expects: G, T, A, C
+        for base in ['G', 'T', 'A', 'C']:  # This order matters!
+            record = base_dict.copy()
+            record['channel'] = base
+            record['intensity'] = intensities[base]
+            records.append(record)
+
+    df_decoded = pd.DataFrame(records)
+
+    # Ensure columns are in the correct order
+    df_decoded = df_decoded[df_bases.columns]
+
+    # CRITICAL: Sort by read, cycle, then by channel in G,T,A,C order
+    channel_order = {'G': 0, 'T': 1, 'A': 2, 'C': 3}
+    df_decoded['_channel_sort'] = df_decoded['channel'].map(channel_order)
+    df_decoded = df_decoded.sort_values(['read', 'cycle', '_channel_sort']).drop('_channel_sort', axis=1)
+    df_decoded = df_decoded.reset_index(drop=True)
+
+    return df_decoded
+
+
 def call_reads(
     bases_data,
     peaks_data=None,
     correction_only_in_cells=True,
-    normalize_bases_first=True,
+    normalize_bases_first=False,
     method="median",
 ):
     """Call reads for in situ sequencing data.
@@ -65,6 +145,26 @@ def call_reads(
     df_reads : pandas DataFrame
         Table of all reads with base calls resulting from SBS compensation and related metadata.
     """
+
+    # Decode bases_data; define thresholds that will determine if a channel is "on" or "off"
+    # IMPORTANT NOTE: COMMENT OUT this section when running 2.configure_sbs_params notebook;
+    # UNCOMMENT when running 4.run_sbs_phenotype.sh script
+    CY3_INTENSITIES = bases_data[bases_data['channel'] == 'Cy3']['intensity']
+    CY5_INTENSITIES = bases_data[bases_data['channel'] == 'Cy5']['intensity']
+    CY3_MEDIAN = CY3_INTENSITIES.median()
+    CY5_MEDIAN = CY5_INTENSITIES.median()
+    CY3_Q10 = CY3_INTENSITIES.quantile(0.10)
+    CY5_Q10 = CY5_INTENSITIES.quantile(0.10)
+    CY3_THRESHOLD = CY3_MEDIAN
+    CY5_THRESHOLD = CY5_MEDIAN
+    BASELINE = min(CY3_Q10, CY5_Q10)
+    print("CY3_THRESHOLD", CY3_THRESHOLD)
+    print("CY5_THRESHOLD", CY5_THRESHOLD)
+    print("BASELINE", BASELINE)
+    bases_data.to_csv("brieflow_output/df_bases_RUN_undecoded.csv", index=False)
+    bases_data = decode_2color_to_bases(bases_data, CY3_THRESHOLD, CY5_THRESHOLD, BASELINE)
+    bases_data.to_csv("brieflow_output/df_bases_RUN_decoded.csv", index=False)
+
     if bases_data.empty or (
         correction_only_in_cells and len(bases_data.query("cell > 0")) == 0
     ):
@@ -132,6 +232,7 @@ def call_reads(
         i, j = df_reads[["i", "j"]].values.T
         df_reads["peak"] = peaks_data[i, j]
 
+    df_reads.to_csv("brieflow_output/df_bases_RUN_reads.csv", index=False)
     return df_reads
 
 

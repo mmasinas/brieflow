@@ -306,9 +306,9 @@ def plot_channels_with_peaks(
         print(f"Found {len(peak_coords)} peaks (binary array, non-zero values)")
 
     # Create figure and subplots
-    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
     fig.suptitle(
-        f"Cycle {cycle_number} with Detected Spots{threshold_text}", fontsize=16
+        f"Cycle {cycle_number+1} with Detected Spots{threshold_text}", fontsize=16
     )
     axes = axes.flatten()
 

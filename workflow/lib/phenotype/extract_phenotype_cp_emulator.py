@@ -377,7 +377,8 @@ def remove_border(labels, mask, dilate=5):
 
     # Remove the identified labels from the labeled image
     labels = labels.copy()
-    labels.flat[np.in1d(labels, remove)] = 0
+    labels.flat[np.isin(labels.flat, remove)] = 0
+    # labels.flat[np.in1d(labels, remove)] = 0
 
     return labels
 
