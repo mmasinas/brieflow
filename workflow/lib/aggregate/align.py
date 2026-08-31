@@ -161,6 +161,9 @@ def tvn_on_controls(
     Returns:
         np.ndarray: The normalized embeddings.
     """
+    if control_key is None:
+        print("Warning: no control key specified, skipping TVN normalization")
+        return embeddings
     lookup_col = control_col if control_col is not None else pert_col
     ctrl_ind = metadata[lookup_col].str.startswith(control_key).to_list()
     n_controls = sum(ctrl_ind)
@@ -283,6 +286,10 @@ def centerscale_on_controls(
     """
     if method not in ["standard", "mad"]:
         raise ValueError(f"Unknown scaling method: {method}. Use 'standard' or 'mad'.")
+
+    if control_key is None:
+        print("Warning: no control key specified, using all cells for centering/scaling")
+        return centerscale_by_batch(embeddings, metadata, batch_col)
 
     # helper for MAD scaling (robust z-score, consistent with std under normality)
     def _mad_scale(X: np.ndarray, ref: np.ndarray) -> np.ndarray:

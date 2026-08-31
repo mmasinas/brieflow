@@ -25,18 +25,115 @@ from lib.sbs.constants import (
 )
 
 
+# # PER-CHANNEL DECODING APPROACH (per-read, PER-CHANNEL relative threshold) —
+# # kept for reference. A channel was 'ON' for a cycle if its intensity was
+# # >= relative_thresh * (that channel's max intensity across ALL cycles for that
+# # read), i.e. each channel thresholded against its own peak brightness. To
+# # revert, comment out the pooled-across-both-channels decode_2color_to_bases
+# # below and uncomment this version.
+# def decode_2color_to_bases(df_bases, relative_thresh=0.2):
+#     """Convert 2-color intensity data to 4-channel base calls.
+#
+#     Uses a per-read, PER-CHANNEL relative threshold: a channel is 'ON' for a
+#     given cycle if its intensity >= relative_thresh * (that channel's max
+#     intensity across ALL cycles for that read). Each channel is thresholded
+#     against its own peak brightness, so a dim channel is not penalized by a
+#     bright one (and vice versa). This still uses the read's own peak brightness
+#     as the reference, making G detection relative rather than absolute and
+#     preventing globally bright/dark cells from producing the AAAAAAAA/GGGGGGGG
+#     artifact seen with per-cycle absolute mean thresholds.
+#
+#     Encoding (matches Illumina 2-channel SBS chemistry):
+#         Cy3 ON  + Cy5 ON  -> A  (both channels high)
+#         Cy3 ON  + Cy5 OFF -> T  (only Cy3 high)
+#         Cy3 OFF + Cy5 ON  -> C  (only Cy5 high)
+#         Cy3 OFF + Cy5 OFF -> G  (both channels dark)
+#
+#     Args:
+#         df_bases: DataFrame with columns [read, cycle, channel, intensity, ...]
+#                   where channel values are 'Cy3' and 'Cy5'.
+#         relative_thresh: Fraction of per-read, per-channel maximum used as on/off
+#                          threshold. Default 0.2 (20%), following NIS-Seq
+#                          convention. Increase to reduce A calls from partially-lit
+#                          cycles, decrease to recover weak signals.
+#
+#     Returns:
+#         DataFrame in same format as df_bases but with channel values replaced by
+#         ['G', 'T', 'A', 'C'] and pseudo-intensities assigned.
+#     """
+#
+#     id_cols = [col for col in df_bases.columns if col not in ['channel', 'intensity']]
+#
+#     df_pivot = df_bases.pivot_table(
+#         index=id_cols,
+#         columns='channel',
+#         values='intensity',
+#         aggfunc='first'
+#     ).reset_index()
+#
+#     # Pre-compute per-read maximum SEPARATELY for each channel (across all cycles
+#     # for that read). Thresholding each channel against its own peak makes G
+#     # detection relative within each channel, so a dim-but-real channel signal is
+#     # not suppressed by the other channel being brighter.
+#     read_max = (
+#         df_pivot.groupby('read')[['Cy3', 'Cy5']]
+#         .max()
+#         .rename(columns={'Cy3': 'read_max_Cy3', 'Cy5': 'read_max_Cy5'})
+#     )
+#     df_pivot = df_pivot.join(read_max, on='read')
+#
+#     records = []
+#     for idx, row in df_pivot.iterrows():
+#         base_dict = {col: row[col] for col in id_cols}
+#
+#         cy3_threshold = relative_thresh * row['read_max_Cy3']
+#         cy5_threshold = relative_thresh * row['read_max_Cy5']
+#
+#         m_on = row['Cy3'] >= cy3_threshold
+#         c_on = row['Cy5'] >= cy5_threshold
+#
+#         if m_on and c_on:
+#             intensities = {'A': max(row['Cy3'], row['Cy5']), 'T': 0, 'C': 0, 'G': 0}
+#         elif m_on and not c_on:
+#             intensities = {'A': 0, 'T': row['Cy3'], 'C': 0, 'G': 0}
+#         elif not m_on and c_on:
+#             intensities = {'A': 0, 'T': 0, 'C': row['Cy5'], 'G': 0}
+#         else:
+#             intensities = {'A': 0, 'T': 0, 'C': 0, 'G': max(row['Cy3'], row['Cy5'])}
+#
+#         for base in ['G', 'T', 'A', 'C']:
+#             record = base_dict.copy()
+#             record['channel'] = base
+#             record['intensity'] = intensities[base]
+#             records.append(record)
+#
+#     df_decoded = pd.DataFrame(records)
+#     df_decoded = df_decoded[df_bases.columns]
+#
+#     channel_order = {'G': 0, 'T': 1, 'A': 2, 'C': 3}
+#     df_decoded['_channel_sort'] = df_decoded['channel'].map(channel_order)
+#     df_decoded = df_decoded.sort_values(['read', 'cycle', '_channel_sort']).drop('_channel_sort', axis=1)
+#     df_decoded = df_decoded.reset_index(drop=True)
+#
+#     return df_decoded
+
+
 # Define 2-color chemistry base mapping
-def decode_2color_to_bases(df_bases, cy3_threshold, cy5_threshold, baseline):
+# CURRENT DECODING APPROACH (per-read relative threshold pooled across BOTH
+# channels). A channel is 'ON' for a given cycle if its intensity is
+# >= relative_thresh * (max intensity across ALL cycles and BOTH channels for
+# that read). To use the per-channel variant instead, comment out this function
+# and uncomment the per-channel decode_2color_to_bases above.
+def decode_2color_to_bases(df_bases, relative_thresh=0.2):
     """Convert 2-color intensity data to 4-channel base calls.
 
-    This converts 2-color combinatorial data into the 4-channel format
-    that brieflow expects (G, T, A, C channels).
+    Uses a per-read relative threshold: a channel is 'ON' for a given cycle if
+    its intensity >= relative_thresh * (max intensity across ALL cycles and BOTH
+    channels for that read).
     """
 
-    # Get ID columns (excluding channel and intensity)
     id_cols = [col for col in df_bases.columns if col not in ['channel', 'intensity']]
 
-    # Pivot to get Cy3 and Cy5 intensities side by side
     df_pivot = df_bases.pivot_table(
         index=id_cols,
         columns='channel',
@@ -44,59 +141,42 @@ def decode_2color_to_bases(df_bases, cy3_threshold, cy5_threshold, baseline):
         aggfunc='first'
     ).reset_index()
 
-    # Create 4 separate rows for each read/cycle (one per base channel)
+    # Pre-compute per-read maximum across ALL cycles and BOTH channels.
+    read_max = (
+        df_pivot.groupby('read')[['Cy3', 'Cy5']]
+        .max()
+        .max(axis=1)
+        .rename('read_max')
+    )
+    df_pivot = df_pivot.join(read_max, on='read')
+
     records = []
     for idx, row in df_pivot.iterrows():
-        # Get the base dictionary with all ID columns
         base_dict = {col: row[col] for col in id_cols}
 
-        # Determine base call based on thresholds
-        m_on = row['Cy3'] >= cy3_threshold
-        c_on = row['Cy5'] >= cy5_threshold
+        threshold = relative_thresh * row['read_max']
 
-        # Determine which base and assign intensities
-        if m_on and c_on:  # A (both on)
-            intensities = {
-                'A': max(row['Cy3'], row['Cy5']),
-                'T': baseline,
-                'C': baseline,
-                'G': 0,
-            }
-        elif m_on and not c_on:  # T (Cy3 only)
-            intensities = {
-                'A': baseline,
-                'T': row['Cy3'],
-                'C': 0,
-                'G': 0
-            }
-        elif not m_on and c_on:  # C (Cy5 only)
-            intensities = {
-                'A': baseline,
-                'T': 0,
-                'C': row['Cy5'],
-                'G': 0
-            }
-        else:  # G (both off)
-            intensities = {
-                'A': 0,
-                'T': 0,
-                'C': 0,
-                'G': max(row['Cy3'], row['Cy5'])
-            }
+        m_on = row['Cy3'] >= threshold
+        c_on = row['Cy5'] >= threshold
 
-        # CRITICAL: Create rows in the EXACT order brieflow expects: G, T, A, C
-        for base in ['G', 'T', 'A', 'C']:  # This order matters!
+        if m_on and c_on:
+            intensities = {'A': max(row['Cy3'], row['Cy5']), 'T': 0, 'C': 0, 'G': 0}
+        elif m_on and not c_on:
+            intensities = {'A': 0, 'T': row['Cy3'], 'C': 0, 'G': 0}
+        elif not m_on and c_on:
+            intensities = {'A': 0, 'T': 0, 'C': row['Cy5'], 'G': 0}
+        else:
+            intensities = {'A': 0, 'T': 0, 'C': 0, 'G': max(row['Cy3'], row['Cy5'])}
+
+        for base in ['G', 'T', 'A', 'C']:
             record = base_dict.copy()
             record['channel'] = base
             record['intensity'] = intensities[base]
             records.append(record)
 
     df_decoded = pd.DataFrame(records)
-
-    # Ensure columns are in the correct order
     df_decoded = df_decoded[df_bases.columns]
 
-    # CRITICAL: Sort by read, cycle, then by channel in G,T,A,C order
     channel_order = {'G': 0, 'T': 1, 'A': 2, 'C': 3}
     df_decoded['_channel_sort'] = df_decoded['channel'].map(channel_order)
     df_decoded = df_decoded.sort_values(['read', 'cycle', '_channel_sort']).drop('_channel_sort', axis=1)
@@ -105,12 +185,306 @@ def decode_2color_to_bases(df_bases, cy3_threshold, cy5_threshold, baseline):
     return df_decoded
 
 
+def _pivot_2color(df_bases):
+    """Pivot raw Cy3/Cy5 long data to one row per read/cycle.
+
+    Returns (df_pivot, id_cols) where df_pivot has the id columns plus 'Cy3' and
+    'Cy5' intensity columns.
+    """
+    id_cols = [col for col in df_bases.columns if col not in ['channel', 'intensity']]
+    df_pivot = df_bases.pivot_table(
+        index=id_cols,
+        columns='channel',
+        values='intensity',
+        aggfunc='first',
+    ).reset_index()
+    return df_pivot, id_cols
+
+
+def correct_2color_channels(df_bases, bleed_select_q=0.75):
+    """Channel-balance and crosstalk-unmix raw Cy3/Cy5 BEFORE decoding.
+
+    Runs on the raw 2-color data (channel column still 'Cy3'/'Cy5') and returns
+    the same long format with corrected 'intensity' values, ready to hand to
+    decode_2color_to_bases. Applied in order:
+
+      1. Crosstalk unmixing — a 2x2 linear correction (observed = M . true) whose
+         off-diagonal bleed terms are estimated from the data: alpha = Cy3->Cy5
+         bleed from confident T spots (Cy3 high, Cy5 low), beta = Cy5->Cy3 bleed
+         from confident C spots. Recovered signal = M^-1 . observed.
+      2. Gain balancing — equalize the two channels' 'on' levels (median of the
+         confident single-channel spots) to their geometric mean, so a pooled
+         relative threshold treats Cy3 and Cy5 fairly while keeping intensities
+         on the raw magnitude scale (so Q / q_min stay interpretable).
+
+    Background/offset subtraction is intentionally NOT performed here (assumed
+    handled upstream at the image preprocessing stage).
+
+    Note: this operates on the continuous 2-channel signal, which is the only
+    stage where crosstalk unmixing is meaningful. The downstream median
+    correction (transform_medians) runs on already-decoded one-hot data, where it
+    collapses to an identity transform, so there is no double-correction.
+    """
+    df_pivot, id_cols = _pivot_2color(df_bases)
+
+    # --- 1. Crosstalk unmixing ---
+    # Select confident single-channel spots to estimate bleed coefficients.
+    hi3 = df_pivot['Cy3'] >= df_pivot['Cy3'].quantile(bleed_select_q)
+    lo5 = df_pivot['Cy5'] <= df_pivot['Cy5'].quantile(1 - bleed_select_q)
+    hi5 = df_pivot['Cy5'] >= df_pivot['Cy5'].quantile(bleed_select_q)
+    lo3 = df_pivot['Cy3'] <= df_pivot['Cy3'].quantile(1 - bleed_select_q)
+    conf_t = hi3 & lo5  # confident T: Cy3 on, Cy5 off  -> residual Cy5/Cy3 = alpha
+    conf_c = hi5 & lo3  # confident C: Cy5 on, Cy3 off  -> residual Cy3/Cy5 = beta
+
+    alpha = (
+        (df_pivot.loc[conf_t, 'Cy5'] / df_pivot.loc[conf_t, 'Cy3'])
+        .replace([np.inf, -np.inf], np.nan)
+        .median()
+    )
+    beta = (
+        (df_pivot.loc[conf_c, 'Cy3'] / df_pivot.loc[conf_c, 'Cy5'])
+        .replace([np.inf, -np.inf], np.nan)
+        .median()
+    )
+    alpha = float(np.nan_to_num(alpha))
+    beta = float(np.nan_to_num(beta))
+
+    M = np.array([[1.0, beta], [alpha, 1.0]])
+    try:
+        M_inv = np.linalg.inv(M)
+    except np.linalg.LinAlgError:
+        M_inv = np.eye(2)
+    obs = df_pivot[['Cy3', 'Cy5']].to_numpy(dtype=float)
+    corr = obs @ M_inv.T
+    df_pivot['Cy3'] = np.clip(corr[:, 0], 0, None)
+    df_pivot['Cy5'] = np.clip(corr[:, 1], 0, None)
+
+    # --- 2. Gain balancing ---
+    # 'On' level of each channel = median among that channel's confident spots.
+    on3 = df_pivot.loc[conf_t, 'Cy3'].median()
+    on5 = df_pivot.loc[conf_c, 'Cy5'].median()
+    if on3 and on5 and on3 > 0 and on5 > 0:
+        target = np.sqrt(on3 * on5)  # common raw-scale magnitude
+        df_pivot['Cy3'] = df_pivot['Cy3'] * (target / on3)
+        df_pivot['Cy5'] = df_pivot['Cy5'] * (target / on5)
+
+    # Melt back to long format (raw 'Cy3'/'Cy5' channel labels retained).
+    df_corrected = df_pivot.melt(
+        id_vars=id_cols,
+        value_vars=['Cy3', 'Cy5'],
+        var_name='channel',
+        value_name='intensity',
+    )
+    return df_corrected[df_bases.columns]
+
+
+# ============================================================================
+# V2 / V3 DECODING APPROACHES (cluster the raw Cy3/Cy5 plane) — ACTIVE for v2/v3.
+# These replace the threshold-based decode_2color_to_bases with a 4-cluster fit
+# in the (Cy3, Cy5) plane, absorbing gain, crosstalk, and background jointly as
+# cluster geometry. To activate one, uncomment the shared helpers below plus the
+# desired decode_2color_* function, then dispatch to it in call_reads (see the
+# decode block there). They run WITHOUT correct_2color_channels, since the
+# clustering already handles channel scaling.
+# ============================================================================
+def _map_components_to_bases(centers):
+    """Map 4 cluster centers in (Cy3, Cy5) space to bases by geometry.
+
+    G = both channels low (nearest origin), A = both high, T = Cy3-high/Cy5-low,
+    C = Cy5-high/Cy3-low. Returns a dict {base: component_index}.
+    """
+    c3, c5 = centers[:, 0], centers[:, 1]
+    order = np.argsort(c3 + c5)
+    g, a = int(order[0]), int(order[-1])
+    mid = [i for i in range(4) if i not in (g, a)]
+    # Of the two intermediate clusters, the more Cy3-dominant one is T, other C.
+    if (c3[mid[0]] - c5[mid[0]]) >= (c3[mid[1]] - c5[mid[1]]):
+        t, c = mid[0], mid[1]
+    else:
+        t, c = mid[1], mid[0]
+    return {'G': g, 'T': t, 'A': a, 'C': c}
+
+
+def _assemble_decoded(df_pivot, id_cols, columns):
+    """Melt a wide (id_cols + G/T/A/C pseudo-intensity) frame back to the long
+    df_bases format, ordered G, T, A, C within each read/cycle."""
+    df_decoded = df_pivot.melt(
+        id_vars=id_cols,
+        value_vars=['G', 'T', 'A', 'C'],
+        var_name='channel',
+        value_name='intensity',
+    )
+    df_decoded = df_decoded[columns]
+
+    channel_order = {'G': 0, 'T': 1, 'A': 2, 'C': 3}
+    df_decoded['_channel_sort'] = df_decoded['channel'].map(channel_order)
+    df_decoded = df_decoded.sort_values(['read', 'cycle', '_channel_sort']).drop('_channel_sort', axis=1)
+    return df_decoded.reset_index(drop=True)
+
+
+def _corner_seeds(Xs):
+    """Percentile 'corner' initial centroids (G, T, C, A) for a stable, mostly
+    deterministic cluster fit in scaled (Cy3, Cy5) space."""
+    lo = np.percentile(Xs, 10, axis=0)
+    hi = np.percentile(Xs, 90, axis=0)
+    return np.array([
+        [lo[0], lo[1]],  # G  (both low)
+        [hi[0], lo[1]],  # T  (Cy3 high, Cy5 low)
+        [lo[0], hi[1]],  # C  (Cy3 low, Cy5 high)
+        [hi[0], hi[1]],  # A  (both high)
+    ])
+
+
+# V2 DECODING APPROACH (Gaussian mixture in the 2D Cy3/Cy5 plane).
+def decode_2color_gmm(df_bases, random_state=0):
+    """Convert 2-color intensity data to 4-channel base calls with a GMM.
+
+    Fits a 4-component Gaussian mixture in the (Cy3, Cy5) plane and maps clusters
+    to bases by geometry (G both-low, A both-high, T Cy3-high, C Cy5-high).
+    Pseudo-intensities are posterior responsibilities scaled to the tile's
+    typical brightness, so the base call is argmax posterior, the runner-up base
+    is nonzero, and the quality score reflects call confidence (the margin
+    between the two most likely clusters) rather than raw brightness.
+    """
+    from sklearn.mixture import GaussianMixture
+
+    df_pivot, id_cols = _pivot_2color(df_bases)
+    X = df_pivot[['Cy3', 'Cy5']].to_numpy(dtype=float)
+
+    # Scale each channel by its median so neither dominates the (Euclidean)
+    # geometry; this folds gain balancing into the clustering.
+    med = np.median(X, axis=0)
+    scale = np.where(med > 0, med, 1.0)
+    Xs = X / scale
+
+    gmm = GaussianMixture(
+        n_components=4,
+        covariance_type='full',
+        means_init=_corner_seeds(Xs),
+        random_state=random_state,
+    )
+    gmm.fit(Xs)
+    resp = gmm.predict_proba(Xs)
+    comp_to_base = _map_components_to_bases(gmm.means_ * scale)
+
+    # Constant per-tile brightness scale keeps pseudo-intensities on the same
+    # order of magnitude as raw signal (so Q / q_min stay interpretable) without
+    # letting dark 'G' reads collapse to zero.
+    nz = X[X > 0]
+    bright = np.median(nz) if nz.size else 1.0
+    for base in ['G', 'T', 'A', 'C']:
+        df_pivot[base] = resp[:, comp_to_base[base]] * bright
+
+    return _assemble_decoded(df_pivot, id_cols, df_bases.columns)
+
+
+# V3 DECODING APPROACH (k-means in the 2D Cy3/Cy5 plane).
+def decode_2color_kmeans(df_bases, random_state=0):
+    """Convert 2-color intensity data to 4-channel base calls with k-means.
+
+    Fits k-means (k=4) in the (Cy3, Cy5) plane and maps clusters to bases by
+    geometry (same convention as decode_2color_gmm). The base call is the nearest
+    centroid (hard assignment). Pseudo-intensities are distance-based soft
+    weights (a Gaussian kernel over the distance to each centroid) scaled to
+    typical brightness, giving a nonzero runner-up so the quality score is not
+    degenerate. The nearest centroid gets the largest weight, so argmax of the
+    pseudo-intensities equals the k-means label.
+    """
+    from sklearn.cluster import KMeans
+
+    df_pivot, id_cols = _pivot_2color(df_bases)
+    X = df_pivot[['Cy3', 'Cy5']].to_numpy(dtype=float)
+
+    med = np.median(X, axis=0)
+    scale = np.where(med > 0, med, 1.0)
+    Xs = X / scale
+
+    km = KMeans(
+        n_clusters=4,
+        init=_corner_seeds(Xs),
+        n_init=1,
+        random_state=random_state,
+    )
+    km.fit(Xs)
+    comp_to_base = _map_components_to_bases(km.cluster_centers_ * scale)
+
+    # Soft weights from distances to each centroid; bandwidth = median nonzero
+    # distance. Nearest centroid -> largest weight -> matches the k-means label.
+    dist = km.transform(Xs)
+    bw = np.median(dist[dist > 0]) if np.any(dist > 0) else 1.0
+    w = np.exp(-(dist ** 2) / (2.0 * bw ** 2))
+    w = w / w.sum(axis=1, keepdims=True)
+
+    nz = X[X > 0]
+    bright = np.median(nz) if nz.size else 1.0
+    for base in ['G', 'T', 'A', 'C']:
+        df_pivot[base] = w[:, comp_to_base[base]] * bright
+
+    return _assemble_decoded(df_pivot, id_cols, df_bases.columns)
+
+
+# # OLD DECODING APPROACH (per-cycle mean thresholds) — kept for reference.
+# # To revert, comment out the relative-threshold decode_2color_to_bases above,
+# # uncomment this function, and restore the matching call_reads block below.
+# def decode_2color_to_bases(df_bases, cycle_thresholds, baseline):
+#     """Convert 2-color intensity data to 4-channel base calls.
+#
+#     cycle_thresholds: dict of {cycle: {'Cy3': threshold, 'Cy5': threshold}}
+#     """
+#
+#     id_cols = [col for col in df_bases.columns if col not in ['channel', 'intensity']]
+#
+#     df_pivot = df_bases.pivot_table(
+#         index=id_cols,
+#         columns='channel',
+#         values='intensity',
+#         aggfunc='first'
+#     ).reset_index()
+#
+#     records = []
+#     for idx, row in df_pivot.iterrows():
+#         base_dict = {col: row[col] for col in id_cols}
+#
+#         # Look up per-cycle thresholds
+#         cy3_threshold = cycle_thresholds[row['cycle']]['Cy3']
+#         cy5_threshold = cycle_thresholds[row['cycle']]['Cy5']
+#
+#         m_on = row['Cy3'] >= cy3_threshold
+#         c_on = row['Cy5'] >= cy5_threshold
+#
+#         if m_on and c_on:
+#             intensities = {'A': max(row['Cy3'], row['Cy5']), 'T': baseline, 'C': baseline, 'G': 0}
+#         elif m_on and not c_on:
+#             intensities = {'A': baseline, 'T': row['Cy3'], 'C': 0, 'G': 0}
+#         elif not m_on and c_on:
+#             intensities = {'A': baseline, 'T': 0, 'C': row['Cy5'], 'G': 0}
+#         else:
+#             intensities = {'A': 0, 'T': 0, 'C': 0, 'G': max(row['Cy3'], row['Cy5'])}
+#
+#         for base in ['G', 'T', 'A', 'C']:
+#             record = base_dict.copy()
+#             record['channel'] = base
+#             record['intensity'] = intensities[base]
+#             records.append(record)
+#
+#     df_decoded = pd.DataFrame(records)
+#     df_decoded = df_decoded[df_bases.columns]
+#
+#     channel_order = {'G': 0, 'T': 1, 'A': 2, 'C': 3}
+#     df_decoded['_channel_sort'] = df_decoded['channel'].map(channel_order)
+#     df_decoded = df_decoded.sort_values(['read', 'cycle', '_channel_sort']).drop('_channel_sort', axis=1)
+#     df_decoded = df_decoded.reset_index(drop=True)
+#
+#     return df_decoded
+
+
 def call_reads(
     bases_data,
     peaks_data=None,
     correction_only_in_cells=True,
     normalize_bases_first=False,
     method="median",
+    relative_thresh=0.35,
 ):
     """Call reads for in situ sequencing data.
 
@@ -141,29 +515,61 @@ def call_reads(
         - "median": Uses median-based correction, performed independently for each tile.
         - "percentile": Uses percentile-based correction, performed independently for each tile.
 
+    relative_thresh : float, default 0.2
+        Per-read, per-channel relative on/off threshold used when decoding raw
+        2-color (Cy3/Cy5) intensities into 4-channel (G/T/A/C) base calls. A
+        channel is "on" for a cycle if its intensity >= relative_thresh * that
+        channel's max intensity across all cycles for the read. Only applied when
+        bases_data still contains raw Cy3/Cy5 channels (i.e. has not already been
+        decoded upstream).
+
     Returns:
-    df_reads : pandas DataFrame
+ df_reads : pandas DataFrame
         Table of all reads with base calls resulting from SBS compensation and related metadata.
     """
 
-    # Decode bases_data; define thresholds that will determine if a channel is "on" or "off"
-    # IMPORTANT NOTE: COMMENT OUT this section when running 2.configure_sbs_params notebook;
-    # UNCOMMENT when running 4.run_sbs_phenotype.sh script
-    CY3_INTENSITIES = bases_data[bases_data['channel'] == 'Cy3']['intensity']
-    CY5_INTENSITIES = bases_data[bases_data['channel'] == 'Cy5']['intensity']
-    CY3_MEDIAN = CY3_INTENSITIES.median()
-    CY5_MEDIAN = CY5_INTENSITIES.median()
-    CY3_Q10 = CY3_INTENSITIES.quantile(0.10)
-    CY5_Q10 = CY5_INTENSITIES.quantile(0.10)
-    CY3_THRESHOLD = CY3_MEDIAN
-    CY5_THRESHOLD = CY5_MEDIAN
-    BASELINE = min(CY3_Q10, CY5_Q10)
-    print("CY3_THRESHOLD", CY3_THRESHOLD)
-    print("CY5_THRESHOLD", CY5_THRESHOLD)
-    print("BASELINE", BASELINE)
-    bases_data.to_csv("brieflow_output/df_bases_RUN_undecoded.csv", index=False)
-    bases_data = decode_2color_to_bases(bases_data, CY3_THRESHOLD, CY5_THRESHOLD, BASELINE)
-    bases_data.to_csv("brieflow_output/df_bases_RUN_decoded.csv", index=False)
+    # Decode raw 2-color (Cy3/Cy5) intensities into 4-channel (G/T/A/C) base calls
+    # using a per-read, per-channel relative threshold (see decode_2color_to_bases). This only
+    # runs when the input still contains raw Cy3/Cy5 channels — e.g. when called
+    # from 4.run_sbs_phenotype.sh. When called from the 2.configure_sbs_params
+    # notebook the data is already decoded, so this step is skipped automatically.
+    if bases_data["channel"].isin(["Cy3", "Cy5"]).any():
+        # ACTIVE = v1 (gain/crosstalk correction + pooled relative threshold) — BEST config.
+        bases_data = correct_2color_channels(bases_data)
+        print("\n\n---DECODER: v1 (corrected) relative threshold---", relative_thresh, '\n\n')
+        bases_data = decode_2color_to_bases(bases_data, relative_thresh=relative_thresh)
+
+        # # To switch decoders, comment out the two v1 lines above and uncomment ONE block:
+        # # v0 (pooled relative threshold only, no correction):
+        # bases_data = decode_2color_to_bases(bases_data, relative_thresh=relative_thresh)
+        # # v2 (Gaussian mixture clustering):
+        # bases_data = decode_2color_gmm(bases_data)
+        # # v3 (k-means clustering):
+        # bases_data = decode_2color_kmeans(bases_data)
+
+    # # OLD DECODING APPROACH (per-cycle mean thresholds) — kept for reference.
+    # # To revert: comment out the relative-threshold decode block above, restore
+    # # the per-cycle-mean decode_2color_to_bases signature near the top of this
+    # # file, and uncomment the block below.
+    # # IMPORTANT NOTE: COMMENT OUT this section when running 2.configure_sbs_params
+    # # notebook; UNCOMMENT when running 4.run_sbs_phenotype.sh script
+    # # # Per-cycle median/mean for each channel
+    # # cycle_thresholds = (
+    # #     bases_data[bases_data['channel'].isin(['Cy3', 'Cy5'])]
+    # #     .groupby(['cycle', 'channel'])['intensity']
+    # #     .mean()
+    # #     .unstack('channel')  # columns become Cy3, Cy5
+    # #     .to_dict('index')  # {cycle: {'Cy3': val, 'Cy5': val}}
+    # # )
+    # # # Baseline: 10th percentile of all intensities across both channels and all cycles
+    # # BASELINE = bases_data[bases_data['channel'].isin(['Cy3', 'Cy5'])]['intensity'].quantile(0.10)
+    # #
+    # # # Print for inspection
+    # # for cycle, thrs in sorted(cycle_thresholds.items()):
+    # #     print(f"Cycle {cycle}  Cy3: {thrs['Cy3']}  Cy5: {thrs['Cy5']}")
+    # # print("BASELINE:", BASELINE)
+    # #
+    # # bases_data = decode_2color_to_bases(bases_data, cycle_thresholds, BASELINE)
 
     if bases_data.empty or (
         correction_only_in_cells and len(bases_data.query("cell > 0")) == 0
@@ -232,7 +638,6 @@ def call_reads(
         i, j = df_reads[["i", "j"]].values.T
         df_reads["peak"] = peaks_data[i, j]
 
-    df_reads.to_csv("brieflow_output/df_bases_RUN_reads.csv", index=False)
     return df_reads
 
 

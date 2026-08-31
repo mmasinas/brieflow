@@ -198,9 +198,12 @@ def plot_phate_leiden_clusters(
             clusters_of_interest = [clusters_of_interest]
 
     # Split data into experimental and control groups
-    control_mask = phate_leiden_clustering[perturbation_name_col].str.startswith(
-        control_key
-    )
+    if control_key is not None:
+        control_mask = phate_leiden_clustering[perturbation_name_col].str.startswith(
+            control_key
+        )
+    else:
+        control_mask = pd.Series(False, index=phate_leiden_clustering.index)
     control_data = phate_leiden_clustering[control_mask]
     exp_data = phate_leiden_clustering[~control_mask]
 
@@ -320,6 +323,16 @@ def calculate_potential_to_nontargeting(
     """
     import numpy as np
     from scipy.spatial.distance import pdist, squareform
+
+    if control_key is None:
+        print("Warning: no control key specified, skipping potential-to-nontargeting calculation")
+        result = pd.DataFrame({
+            "gene_symbol_0": potential_df["gene_symbol_0"],
+            "mean_potential_to_nontargeting": np.nan,
+        })
+        if normalize:
+            result["normalized_potential_to_nontargeting"] = np.nan
+        return result
 
     # Extract potential columns (all columns except gene_symbol_0)
     potential_cols = [

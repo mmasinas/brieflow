@@ -364,7 +364,7 @@ def calculate_group_enrichment(
         group_ids = list(group_to_genes.keys())
 
         for group_id in group_ids:
-            group_genes = group_to_genes[group_id]
+            group_genes = group_to_genes[group_id] & background_genes
             a = len(cluster_genes & group_genes)
             b = len(group_genes) - a
             c = len(cluster_genes) - a

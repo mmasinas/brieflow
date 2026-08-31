@@ -808,19 +808,34 @@ def _process_combination(
                 None,
             )
 
-        # Decode bases_data; define thresholds that will determine if a channel is "on" or "off"
-        # IMPORTANT NOTE: COMMENT OUT this section when running 2.configure_sbs_params notebook;
-        # UNCOMMENT when running 4.run_sbs_phenotype.sh script
-        CY3_INTENSITIES = df_bases[df_bases['channel'] == 'Cy3']['intensity']
-        CY5_INTENSITIES = df_bases[df_bases['channel'] == 'Cy5']['intensity']
-        CY3_MEDIAN = CY3_INTENSITIES.median()
-        CY5_MEDIAN = CY5_INTENSITIES.median()
-        CY3_Q10 = CY3_INTENSITIES.quantile(0.40)  # Q10 is too small since Cy3 signal is weak, try Q40
-        CY5_Q10 = CY5_INTENSITIES.quantile(0.40)
-        CY3_THRESHOLD = CY3_MEDIAN
-        CY5_THRESHOLD = CY5_MEDIAN
-        BASELINE = min(CY3_Q10, CY5_Q10)
-        df_bases = decode_2color_to_bases(df_bases, CY3_THRESHOLD, CY5_THRESHOLD, BASELINE)
+        # OUTDATED DECODING — intentionally disabled. This block (and the local
+        # decode_2color_to_bases at the top of this file) uses the old per-channel
+        # median/baseline thresholds, NOT the current approach in
+        # lib/sbs/call_reads.py (pooled relative threshold + optional
+        # correct_2color_channels). Left commented so the parameter search cannot
+        # silently optimize against an abandoned decoding scheme.
+        #
+        # To re-enable the automated parameter search, delete the raise below and
+        # decode consistently with the pipeline instead — e.g. drop this block and
+        # let call_reads decode internally: call_reads(df_bases, peaks_data=peaks,
+        # method=call_reads_method, relative_thresh=...), since call_reads decodes
+        # raw Cy3/Cy5 itself.
+        raise NotImplementedError(
+            "automated_parameter_search uses an outdated 2-color decoding scheme. "
+            "Update it to match lib/sbs/call_reads.py (pooled relative threshold, "
+            "optional correct_2color_channels) before using the parameter search. "
+            "See the commented block in evaluate_sbs_parameters()."
+        )
+        # CY3_INTENSITIES = df_bases[df_bases['channel'] == 'Cy3']['intensity']
+        # CY5_INTENSITIES = df_bases[df_bases['channel'] == 'Cy5']['intensity']
+        # CY3_MEDIAN = CY3_INTENSITIES.median()
+        # CY5_MEDIAN = CY5_INTENSITIES.median()
+        # CY3_Q10 = CY3_INTENSITIES.quantile(0.40)  # Q10 is too small since Cy3 signal is weak, try Q40
+        # CY5_Q10 = CY5_INTENSITIES.quantile(0.40)
+        # CY3_THRESHOLD = CY3_MEDIAN
+        # CY5_THRESHOLD = CY5_MEDIAN
+        # BASELINE = min(CY3_Q10, CY5_Q10)
+        # df_bases = decode_2color_to_bases(df_bases, CY3_THRESHOLD, CY5_THRESHOLD, BASELINE)
 
         # Call reads
         df_reads = call_reads(df_bases, peaks_data=peaks, method=call_reads_method)

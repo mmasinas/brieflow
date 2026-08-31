@@ -17,7 +17,11 @@ construct_pval_files = glob.glob(f"{constructs_dir}/*__pvals.tsv")
 print(f"Found {len(construct_pval_files)} construct result files")
 
 if not construct_pval_files:
-    raise ValueError(f"No construct p-value files found in {constructs_dir}")
+    print(f"Warning: No construct p-value files found in {constructs_dir} (no controls?) — writing empty outputs")
+    pd.DataFrame().to_csv(snakemake.output[0], sep="\t", index=False)
+    pd.DataFrame().to_csv(snakemake.output[1], sep="\t", index=False)
+    print("Bootstrap combination complete (empty — no control cells)")
+    raise SystemExit(0)
 
 construct_results = []
 for pval_file in construct_pval_files:

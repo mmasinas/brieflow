@@ -195,9 +195,12 @@ print(f"Construct table shape: {construct_table.shape}")
 print("\n=== Creating gene-level table ===")
 
 # Filter out controls for gene-level aggregation
-non_control_constructs = construct_table[
-    ~construct_table[pert_col].str.contains(control_key, na=False)
-]
+if control_key is not None:
+    is_control = construct_table[pert_col].str.contains(control_key, na=False)
+else:
+    is_control = pd.Series(False, index=construct_table.index)
+
+non_control_constructs = construct_table[~is_control]
 
 # Calculate gene-level sample sizes (sum of construct cell counts)
 gene_sample_sizes = (
@@ -217,9 +220,7 @@ gene_features = gene_features.reset_index()
 gene_table = pd.merge(gene_features, gene_sample_sizes, on=pert_col, how="left")
 
 # Add controls to gene table (controls are their own "genes")
-control_constructs = construct_table[
-    construct_table[pert_col].str.contains(control_key, na=False)
-]
+control_constructs = construct_table[is_control]
 control_gene_table = control_constructs[[pert_col, "cell_count"] + feature_cols].copy()
 
 # Combine gene table with controls

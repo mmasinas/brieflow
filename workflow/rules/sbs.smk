@@ -145,7 +145,8 @@ rule call_reads:
     output:
         SBS_OUTPUTS_MAPPED["call_reads"],
     params:
-        call_reads_method=config["sbs"]["call_reads_method"]
+        call_reads_method=config["sbs"]["call_reads_method"],
+        relative_thresh=config["sbs"].get("relative_thresh", 0.35),
     script:
         "../scripts/sbs/call_reads.py"
 

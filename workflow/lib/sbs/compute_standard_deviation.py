@@ -19,6 +19,10 @@ def compute_standard_deviation(log_filtered_data, remove_index=None):
     if remove_index is not None:
         log_filtered_data = remove_channels(log_filtered_data, remove_index)
 
+    # If 4D with only one cycle, squeeze to 3D so std is computed across channels
+    if log_filtered_data.ndim == 4 and log_filtered_data.shape[0] == 1:
+        log_filtered_data = log_filtered_data[0]
+
     # If only one cycle present, add a new dimension
     if len(log_filtered_data.shape) == 3:
         log_filtered_data = log_filtered_data[:, None, ...]

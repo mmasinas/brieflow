@@ -41,6 +41,12 @@ def perturbation_score(
         minimum_cell_count (int, optional): Minimum number of cells required to process a perturbation. Defaults to 100.
         n_jobs (int, optional): Number of parallel jobs. -1 uses all available CPUs. Defaults to -1.
     """
+    if control_key is None:
+        print("Warning: no control key specified, skipping perturbation scoring")
+        cell_data["perturbation_score"] = np.nan
+        cell_data["perturbation_auc"] = np.nan
+        return
+
     perturbation_col = cell_data[perturbation_name_col]
     perturbed_genes = [
         gene

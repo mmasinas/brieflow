@@ -14,6 +14,7 @@ reads_data = call_reads(
     bases_data=bases_data,
     peaks_data=peaks_data,
     method=snakemake.params.call_reads_method,
+    relative_thresh=snakemake.params.relative_thresh,
 )
 
 # save reads data
