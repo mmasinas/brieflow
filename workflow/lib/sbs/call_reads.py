@@ -34,6 +34,7 @@ def call_reads(
     chemistry="four_color",
     combinatorial=None,
     codebook=None,
+    keep_intensities=False,
 ):
     """Call reads for in situ sequencing data.
 
@@ -74,6 +75,13 @@ def call_reads(
 
     codebook : pandas.DataFrame or None, default None
         Barcode library with a ``prefix`` column. Required by ``method="merfish"``.
+
+    keep_intensities : boolean, default False
+        Four-color chemistry only. If True, also return the per-cycle per-channel
+        values the base call was made from: ``intensity_C{cycle}_{base}`` (the values
+        passed into the correction, i.e. normalized if normalize_bases_first) and
+        ``corrected_C{cycle}_{base}`` (Y, the array argmax is taken over). Off by
+        default so the output schema is unchanged.
 
     Returns:
     df_reads : pandas DataFrame
@@ -119,6 +127,7 @@ def call_reads(
                     cycles,
                     channels=channels,
                     correction_only_in_cells=correction_only_in_cells,
+                    keep_intensities=keep_intensities,
                 )
             )
         else:
@@ -128,6 +137,7 @@ def call_reads(
                 cycles,
                 channels=channels,
                 correction_only_in_cells=correction_only_in_cells,
+                keep_intensities=keep_intensities,
             )
     elif chemistry == "four_color" and method == "percentile":
         # Clean up bases and perform percentile calling
@@ -136,6 +146,7 @@ def call_reads(
             cycles=cycles,
             channels=channels,
             correction_only_in_cells=correction_only_in_cells,
+            keep_intensities=keep_intensities,
         )
     elif chemistry == "combinatorial" and method == "frac":
         df_reads = bases_data.pipe(clean_up_bases).pipe(
@@ -169,6 +180,14 @@ def call_reads(
         i, j = df_reads[["i", "j"]].values.T
         df_reads["peak"] = peaks_data[i, j]
 
+    # Move the optional per-cycle columns to the end so the standard columns keep their
+    # usual positions and the output is a strict superset of a run without the option.
+    if keep_intensities:
+        extra = [
+            c for c in df_reads.columns if c.startswith(("intensity_C", "corrected_C"))
+        ]
+        df_reads = df_reads[[c for c in df_reads.columns if c not in extra] + extra]
+
     return df_reads
 
 
@@ -192,6 +211,7 @@ def do_median_call(
     correction_quartile=0,
     correction_only_in_cells=False,
     correction_by_cycle=False,
+    keep_intensities=False,
 ):
     """Call reads from raw base signal using median correction.
 
@@ -202,6 +222,8 @@ def do_median_call(
         correction_quartile (int): Quartile used for correction.
         correction_only_in_cells (bool): Flag specifying whether correction is based on reads within cells or all reads.
         correction_by_cycle (bool): Flag specifying if correction should be done by cycle.
+        keep_intensities (bool): Also emit the per-cycle per-channel values the call was
+            made from (see call_reads).
 
     Returns:
         pandas.DataFrame: DataFrame containing the called reads.
@@ -243,7 +265,9 @@ def do_median_call(
         )
 
     # Call barcodes
-    df_reads = call_barcodes(df_bases, Y, cycles=cycles, channels=channels)
+    df_reads = call_barcodes(
+        df_bases, Y, cycles=cycles, channels=channels, keep_intensities=keep_intensities
+    )
 
     return df_reads
 
@@ -253,6 +277,7 @@ def do_percentile_call(
     cycles=12,
     channels=4,
     correction_only_in_cells=False,
+    keep_intensities=False,
 ):
     """Call reads from raw base signal using percentile-based correction.
 
@@ -261,6 +286,8 @@ def do_percentile_call(
         cycles (int): Number of sequencing cycles.
         channels (int): Number of sequencing channels.
         correction_only_in_cells (bool): Flag specifying whether correction is based on reads within cells or all reads.
+        keep_intensities (bool): Also emit the per-cycle per-channel values the call was
+            made from (see call_reads).
 
     Returns:
         pandas.DataFrame: DataFrame containing the called reads.
@@ -277,7 +304,9 @@ def do_percentile_call(
         X = dataframe_to_values(df_bases)
         Y, W = transform_percentiles(X.reshape(-1, channels))
 
-    df_reads = call_barcodes(df_bases, Y, cycles=cycles, channels=channels)
+    df_reads = call_barcodes(
+        df_bases, Y, cycles=cycles, channels=channels, keep_intensities=keep_intensities
+    )
 
     return df_reads
 
@@ -639,7 +668,7 @@ def transform_percentiles(X):
     return Y, W
 
 
-def call_barcodes(df_bases, Y, cycles=12, channels=4):
+def call_barcodes(df_bases, Y, cycles=12, channels=4, keep_intensities=False):
     """Assign barcode sequences to reads based on the transformed base signal obtained from sequencing data.
 
     Args:
@@ -647,6 +676,10 @@ def call_barcodes(df_bases, Y, cycles=12, channels=4):
         Y (numpy array): Transformed base signal reshaped into a suitable format for the calling process.
         cycles (int): Number of sequencing cycles.
         channels (int): Number of sequencing channels.
+        keep_intensities (bool): If True, keep the per-cycle per-channel values the call
+            was made from as `intensity_C{cycle}_{base}` (input to the correction) and
+            `corrected_C{cycle}_{base}` (Y, the array `argmax` is taken over). These are
+            otherwise discarded with the CYCLE/CHANNEL/INTENSITY columns below.
 
     Returns:
         df_reads (pandas DataFrame): DataFrame with assigned barcode sequences and quality scores for each read.
@@ -673,6 +706,18 @@ def call_barcodes(df_bases, Y, cycles=12, channels=4):
 
     # Assign minimum quality score for each read
     df_reads = df_reads.assign(Q_min=lambda x: x.filter(regex=r"Q_\d+").min(axis=1))
+
+    # Optionally keep the values the base call was actually made from. df_reads has one
+    # row per read, so the per-cycle per-channel values are widened into columns. Row
+    # order matches Y because both come from the same sorted df_bases.
+    if keep_intensities:
+        cycle_labels = sorted(set(df_bases[CYCLE]))
+        X_in = dataframe_to_values(df_bases).reshape(-1, cycles, channels)
+        Y_out = Y.reshape(-1, cycles, channels)
+        for ci, cycle_label in enumerate(cycle_labels):
+            for bi, base in enumerate(bases):
+                df_reads["intensity_C%s_%s" % (cycle_label, base)] = X_in[:, ci, bi]
+                df_reads["corrected_C%s_%s" % (cycle_label, base)] = Y_out[:, ci, bi]
 
     # Drop unnecessary columns
     df_reads = df_reads.drop([CYCLE, CHANNEL, INTENSITY], axis=1)

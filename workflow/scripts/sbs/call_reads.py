@@ -29,6 +29,7 @@ reads_data = call_reads(
     chemistry=snakemake.params.chemistry,
     combinatorial=snakemake.params.combinatorial,
     codebook=codebook,
+    keep_intensities=snakemake.params.keep_intensities,
 )
 
 # Save reads data

@@ -152,6 +152,7 @@ rule call_reads:
         combinatorial=config.get("sbs", {}).get("combinatorial", None),
         codebook_fp=config.get("sbs", {}).get("df_barcode_library_fp", None),
         error_correct=config.get("sbs", {}).get("error_correct", False),
+        keep_intensities=config.get("sbs", {}).get("keep_call_intensities", False),
     script:
         "../scripts/sbs/call_reads.py"
 
