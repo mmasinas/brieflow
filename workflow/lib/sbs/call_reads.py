@@ -237,9 +237,11 @@ def do_median_call(
             _, W = transform_medians(
                 X_.reshape(-1, channels), correction_quartile=correction_quartile
             )
-            # Apply transformation to all data
+            # Apply transformation to all data. Keep Y as float: normalize_bases
+            # (the default) scales intensities to ~1, so .astype(int) truncated most
+            # values to 0 and left argmax below to break ties by channel order.
             X = dataframe_to_values(df)
-            Y = W.dot(X.reshape(-1, channels).T).T.astype(int)
+            Y = W.dot(X.reshape(-1, channels).T).T
         else:
             # Apply correction to all data
             X = dataframe_to_values(df)
@@ -297,9 +299,9 @@ def do_percentile_call(
         X_ = dataframe_to_values(df_bases.query("cell > 0"))
         _, W = transform_percentiles(X_.reshape(-1, channels))
 
-        # Then apply to all data
+        # Then apply to all data. Keep Y as float -- see do_median_call.
         X = dataframe_to_values(df_bases)
-        Y = W.dot(X.reshape(-1, channels).T).T.astype(int)
+        Y = W.dot(X.reshape(-1, channels).T).T
     else:
         X = dataframe_to_values(df_bases)
         Y, W = transform_percentiles(X.reshape(-1, channels))
@@ -615,8 +617,8 @@ def transform_medians(X, correction_quartile=0):
     M = M / M.sum(axis=0)
     # Compute the inverse of M to obtain the transformation matrix W
     W = np.linalg.inv(M)
-    # Apply transformation to X
-    Y = W.dot(X.T).T.astype(int)
+    # Apply transformation to X. Keep Y as float -- see do_median_call.
+    Y = W.dot(X.T).T
     return Y, W
 
 
@@ -662,8 +664,8 @@ def transform_percentiles(X):
     # Compute inverse to get transformation matrix
     W = np.linalg.inv(M)
 
-    # Apply transformation
-    Y = W.dot(X.T).T.astype(int)
+    # Apply transformation. Keep Y as float -- see do_median_call.
+    Y = W.dot(X.T).T
 
     return Y, W
 
