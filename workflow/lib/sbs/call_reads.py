@@ -7,6 +7,8 @@ It includes functions for:
 - Read Formatting: Tools to format and normalize sequencing reads.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -615,6 +617,16 @@ def transform_medians(X, correction_quartile=0):
     M = get_medians(X, correction_quartile).T
     # Normalize matrix M
     M = M / M.sum(axis=0)
+    # A tile with very few in-cell reads can leave a channel that is never the
+    # brightest (median of an empty slice -> NaN) or whose median is all zeros
+    # (0/0 in the line above), which makes M singular and fills Y with NaN.
+    # Fall back to no correction on such tiles instead of emitting garbage.
+    if not np.isfinite(M).all() or np.linalg.cond(M) > 1e6:
+        warnings.warn(
+            "transform_medians: degenerate channel matrix "
+            "(too few reads to estimate crosstalk); skipping correction"
+        )
+        M = np.eye(M.shape[0])
     # Compute the inverse of M to obtain the transformation matrix W
     W = np.linalg.inv(M)
     # Apply transformation to X. Keep Y as float -- see do_median_call.
