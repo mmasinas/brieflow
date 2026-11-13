@@ -28,6 +28,7 @@ from lib.sbs.constants import (
     UMI_COUNT,
     UMI_COUNT_0,
     UMI_COUNT_1,
+    KEPT_CALL_PREFIXES,
 )
 
 COLS = [WELL, TILE, CELL]
@@ -123,6 +124,14 @@ def call_cells(
 
     if reads_data is None or reads_data.empty:
         return _get_empty_output()
+
+    # The per-cycle per-channel columns written by sbs.keep_call_intensities describe a
+    # READ, not a cell. Unrecognised columns are carried through to the output, where
+    # they would be one arbitrary read's values stamped onto the cell row. Drop them so
+    # the cells output is identical to a run without that option.
+    _read_level = [c for c in reads_data.columns if c.startswith(KEPT_CALL_PREFIXES)]
+    if _read_level:
+        reads_data = reads_data.drop(columns=_read_level)
 
     # Auto-detect prefix_col from library if not supplied (canonical name: 'prefix')
     if (

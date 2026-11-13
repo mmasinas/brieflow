@@ -15,6 +15,18 @@ max_filtered_data = read_image(snakemake.input[1])
 # Load cells data
 cells_data = read_image(snakemake.input[2])
 
+# Optional pixel trace (sbs.keep_call_intensities): aligned and LoG-filtered images,
+# inputs 3 and 4, with the extra (non-base) channels removed to match max_filtered_data
+trace_data = None
+if getattr(snakemake.params, "keep_pixel_trace", False):
+    import numpy as np
+
+    extra = list(snakemake.params.extra_channel_indices or [])
+    trace_data = {
+        "aligned": np.delete(read_image(snakemake.input[3]), extra, axis=1),
+        "log_filtered": np.delete(read_image(snakemake.input[4]), extra, axis=1),
+    }
+
 # Extract bases
 # Build wildcards dict, synthesizing 'well' from 'row'+'col' in zarr mode
 wc = dict(snakemake.wildcards)
@@ -28,6 +40,7 @@ bases_data = extract_bases(
     threshold_peaks=snakemake.params.threshold_peaks,
     bases=snakemake.params.bases,
     wildcards=wc,
+    trace_data=trace_data,
 )
 
 # Save bases data

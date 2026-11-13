@@ -130,11 +130,15 @@ rule extract_bases:
         SBS_OUTPUTS["max_filter"],
         # optionally use cell or nuclei segmentation
         lambda wildcards: SBS_OUTPUTS["segment_sbs"][1] if config.get("sbs", {}).get("segment_cells", True) else SBS_OUTPUTS["segment_sbs"][0],
+        # optional pixel trace (sbs.keep_call_intensities): aligned + LoG-filtered images
+        lambda wildcards: [SBS_OUTPUTS["align_sbs"][0], SBS_OUTPUTS["log_filter"][0]] if config.get("sbs", {}).get("keep_call_intensities", False) else [],
     output:
         SBS_OUTPUTS_MAPPED["extract_bases"],
     params:
         threshold_peaks=config.get("sbs", {}).get("threshold_peaks"),
         bases=config.get("sbs", {}).get("bases"),
+        keep_pixel_trace=config.get("sbs", {}).get("keep_call_intensities", False),
+        extra_channel_indices=config.get("sbs", {}).get("extra_channel_indices", []),
     script:
         "../scripts/sbs/extract_bases.py"
 
@@ -152,6 +156,7 @@ rule call_reads:
         combinatorial=config.get("sbs", {}).get("combinatorial", None),
         codebook_fp=config.get("sbs", {}).get("df_barcode_library_fp", None),
         error_correct=config.get("sbs", {}).get("error_correct", False),
+        keep_intensities=config.get("sbs", {}).get("keep_call_intensities", False),
     script:
         "../scripts/sbs/call_reads.py"
 

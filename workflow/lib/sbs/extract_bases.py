@@ -21,7 +21,13 @@ from lib.sbs.constants import (
 
 
 def extract_bases(
-    peaks_data, max_filtered_data, cells_data, threshold_peaks, wildcards, bases="GTAC"
+    peaks_data,
+    max_filtered_data,
+    cells_data,
+    threshold_peaks,
+    wildcards,
+    bases="GTAC",
+    trace_data=None,
 ):
     """Find the signal intensity from `maxed` at each point in `peaks` above `threshold_peaks`.
 
@@ -35,6 +41,11 @@ def extract_bases(
         threshold_peaks (float): Threshold for identifying candidate sequencing reads based on peaks.
         wildcards (dict): Metadata to include in output table, e.g., well, tile, etc. In Snakemake, use wildcards object.
         bases (str, optional): Order of bases corresponding to the order of acquired SBS channels in `maxed`. Default is 'GTAC'.
+        trace_data (dict, optional): Extra images, ``{column name: array}``, each with the same
+            (CYCLE, CHANNEL, I, J) shape and channel order as `max_filtered_data` (extra channels such as
+            DAPI already removed). The value at each read pixel is added as a column of that name, e.g.
+            ``{"aligned": ..., "log_filtered": ...}`` to trace a read back through the image stages.
+            Default None leaves the output unchanged.
 
     Returns:
         pandas.DataFrame: Table of all candidate sequencing reads with intensity of each base for every cycle,
@@ -58,6 +69,30 @@ def extract_bases(
 
     # Format base intensity data into DataFrame
     df_bases = format_bases(values, labels, positions, cycles, bases)
+
+    # Optionally add the value at each read pixel from other image stages
+    if trace_data and not df_bases.empty:
+        read_mask = peaks_data > threshold_peaks
+        n_reads = int(read_mask.sum())
+        for name, image in trace_data.items():
+            if image.ndim == 3:
+                image = image[None]
+            if image.shape != max_filtered_data.shape:
+                raise ValueError(
+                    f"trace_data['{name}'] has shape {image.shape}, expected "
+                    f"{max_filtered_data.shape} like max_filtered_data"
+                )
+            # Same read order as extract_base_intensity: reads x cycles x channels
+            trace_values = image[:, :, read_mask].transpose([2, 0, 1])
+            df_trace = pd.DataFrame(
+                {
+                    READ: np.repeat(np.arange(n_reads), len(cycles) * len(bases)),
+                    CYCLE: np.tile(np.repeat(cycles, len(bases)), n_reads),
+                    CHANNEL: np.tile(bases, n_reads * len(cycles)),
+                    name: trace_values.reshape(-1),
+                }
+            )
+            df_bases = df_bases.merge(df_trace, on=[READ, CYCLE, CHANNEL], how="left")
 
     # Add wildcard metadata to the DataFrame
     add_wildcard_columns(df_bases, wildcards)

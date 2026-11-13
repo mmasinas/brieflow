@@ -22,6 +22,8 @@ from lib.sbs.constants import (
     CYCLE,
     BARCODE,
     INTENSITY,
+    PIXEL_TRACE_COLUMNS,
+    KEPT_CALL_PREFIXES,
 )
 
 
@@ -34,6 +36,7 @@ def call_reads(
     chemistry="four_color",
     combinatorial=None,
     codebook=None,
+    keep_intensities=False,
 ):
     """Call reads for in situ sequencing data.
 
@@ -75,6 +78,21 @@ def call_reads(
     codebook : pandas.DataFrame or None, default None
         Barcode library with a ``prefix`` column. Required by ``method="merfish"``.
 
+    keep_intensities : boolean, default False
+        If True, also return the per-cycle values the base call was made from (column
+        prefixes in ``lib.sbs.constants.KEPT_CALL_PREFIXES``). Off by default so the
+        output schema is unchanged.
+
+        - Four-color: ``intensity_C{cycle}_{base}`` (the values passed into the
+          correction, i.e. normalized if normalize_bases_first) and
+          ``corrected_C{cycle}_{base}`` (Y, the array argmax is taken over).
+        - Combinatorial ``frac``: every intermediate of the call, see do_frac_call.
+        - Any chemistry: if ``bases_data`` carries the optional pixel-trace columns
+          from extract_bases (``aligned``, ``log_filtered``), they are widened to
+          ``aligned_C{cycle}_{channel}`` and ``log_C{cycle}_{channel}``.
+
+        Without it, pixel-trace columns in ``bases_data`` are ignored.
+
     Returns:
     df_reads : pandas DataFrame
         Table of all reads with base calls resulting from SBS compensation and related metadata.
@@ -105,6 +123,16 @@ def call_reads(
 
         return pd.DataFrame(columns=final_columns)
 
+    # Optional pixel-trace columns from extract_bases are per (read, cycle, channel).
+    # The callers must not see them (they would leak one row's value onto the read),
+    # so widen them to per-read columns here and take them out of bases_data.
+    pixel_cols = [c for c in PIXEL_TRACE_COLUMNS if c in bases_data.columns]
+    pixel_wide = None
+    if pixel_cols:
+        if keep_intensities:
+            pixel_wide = _widen_pixel_trace(bases_data, pixel_cols)
+        bases_data = bases_data.drop(columns=pixel_cols)
+
     cycles = len(set(bases_data["cycle"]))
     channels = len(set(bases_data["channel"]))
 
@@ -119,6 +147,7 @@ def call_reads(
                     cycles,
                     channels=channels,
                     correction_only_in_cells=correction_only_in_cells,
+                    keep_intensities=keep_intensities,
                 )
             )
         else:
@@ -128,6 +157,7 @@ def call_reads(
                 cycles,
                 channels=channels,
                 correction_only_in_cells=correction_only_in_cells,
+                keep_intensities=keep_intensities,
             )
     elif chemistry == "four_color" and method == "percentile":
         # Clean up bases and perform percentile calling
@@ -136,12 +166,14 @@ def call_reads(
             cycles=cycles,
             channels=channels,
             correction_only_in_cells=correction_only_in_cells,
+            keep_intensities=keep_intensities,
         )
     elif chemistry == "combinatorial" and method == "frac":
         df_reads = bases_data.pipe(clean_up_bases).pipe(
             do_frac_call,
             cycles=cycles,
             combinatorial=combinatorial,
+            keep_intensities=keep_intensities,
         )
     elif chemistry == "combinatorial" and method == "merfish":
         df_reads = bases_data.pipe(clean_up_bases).pipe(
@@ -169,7 +201,33 @@ def call_reads(
         i, j = df_reads[["i", "j"]].values.T
         df_reads["peak"] = peaks_data[i, j]
 
+    if pixel_wide is not None:
+        df_reads = df_reads.merge(pixel_wide, on=[WELL, TILE, READ], how="left")
+
+    # Move the optional per-cycle columns to the end so the standard columns keep their
+    # usual positions and the output is a strict superset of a run without the option.
+    if keep_intensities:
+        extra = [c for c in df_reads.columns if c.startswith(KEPT_CALL_PREFIXES)]
+        df_reads = df_reads[[c for c in df_reads.columns if c not in extra] + extra]
+
     return df_reads
+
+
+def _widen_pixel_trace(bases_data, pixel_cols):
+    """Pivot per (read, cycle, channel) pixel-trace columns to one row per read.
+
+    Column ``aligned`` becomes ``aligned_C{cycle}_{channel}`` and ``log_filtered``
+    becomes ``log_C{cycle}_{channel}`` (prefixes from PIXEL_TRACE_COLUMNS).
+    """
+    wide_parts = []
+    for col in pixel_cols:
+        wide = bases_data.pivot(
+            index=[WELL, TILE, READ], columns=[CYCLE, CHANNEL], values=col
+        )
+        prefix = PIXEL_TRACE_COLUMNS[col]
+        wide.columns = [f"{prefix}{cyc}_{ch}" for cyc, ch in wide.columns]
+        wide_parts.append(wide)
+    return pd.concat(wide_parts, axis=1).reset_index()
 
 
 def clean_up_bases(df_bases):
@@ -192,6 +250,7 @@ def do_median_call(
     correction_quartile=0,
     correction_only_in_cells=False,
     correction_by_cycle=False,
+    keep_intensities=False,
 ):
     """Call reads from raw base signal using median correction.
 
@@ -202,6 +261,8 @@ def do_median_call(
         correction_quartile (int): Quartile used for correction.
         correction_only_in_cells (bool): Flag specifying whether correction is based on reads within cells or all reads.
         correction_by_cycle (bool): Flag specifying if correction should be done by cycle.
+        keep_intensities (bool): Also emit the per-cycle per-channel values the call was
+            made from (see call_reads).
 
     Returns:
         pandas.DataFrame: DataFrame containing the called reads.
@@ -243,7 +304,9 @@ def do_median_call(
         )
 
     # Call barcodes
-    df_reads = call_barcodes(df_bases, Y, cycles=cycles, channels=channels)
+    df_reads = call_barcodes(
+        df_bases, Y, cycles=cycles, channels=channels, keep_intensities=keep_intensities
+    )
 
     return df_reads
 
@@ -253,6 +316,7 @@ def do_percentile_call(
     cycles=12,
     channels=4,
     correction_only_in_cells=False,
+    keep_intensities=False,
 ):
     """Call reads from raw base signal using percentile-based correction.
 
@@ -261,6 +325,8 @@ def do_percentile_call(
         cycles (int): Number of sequencing cycles.
         channels (int): Number of sequencing channels.
         correction_only_in_cells (bool): Flag specifying whether correction is based on reads within cells or all reads.
+        keep_intensities (bool): Also emit the per-cycle per-channel values the call was
+            made from (see call_reads).
 
     Returns:
         pandas.DataFrame: DataFrame containing the called reads.
@@ -277,12 +343,14 @@ def do_percentile_call(
         X = dataframe_to_values(df_bases)
         Y, W = transform_percentiles(X.reshape(-1, channels))
 
-    df_reads = call_barcodes(df_bases, Y, cycles=cycles, channels=channels)
+    df_reads = call_barcodes(
+        df_bases, Y, cycles=cycles, channels=channels, keep_intensities=keep_intensities
+    )
 
     return df_reads
 
 
-def do_frac_call(df_bases, cycles=12, combinatorial=None):
+def do_frac_call(df_bases, cycles=12, combinatorial=None, keep_intensities=False):
     """Call combinatorial bases from relative brightness and dye composition.
 
     A dim cycle relative to the read's median cycle brightness is the blank
@@ -305,11 +373,21 @@ def do_frac_call(df_bases, cycles=12, combinatorial=None):
     equally near two or more bases (e.g. all three dyes on, C and A tied) ``N``
     instead of the first tied base in code order. An ``N`` cycle has quality 0 and is
     left out of ``Q_min``; ``call_cells`` can resolve it (``n_wildcard``).
+
+    ``keep_intensities`` adds every intermediate of the call as per-read columns, for
+    cycle ``c`` and dye ``d`` (cycle labels as in the bases table):
+    ``intensity_C{c}_{d}`` (input), ``scaled_C{c}_{d}`` (after dye_scale),
+    ``total_C{c}``, ``brightref_C{c}``, ``relbright_C{c}``, ``bright_C{c}``,
+    ``fraction_C{c}_{d}``, ``on_C{c}_{d}``, ``confidence_C{c}_{d}``,
+    ``distance_C{c}``, ``tied_C{c}``, plus the constants ``frac_blank_threshold``,
+    ``frac_fraction_threshold`` and ``frac_dye_scale_{d}`` actually used.
     """
     dye, dye_labels, base_chars, templates = _combinatorial_setup(
         df_bases, combinatorial
     )
-    dye = dye * _dye_scale(dye_labels, combinatorial.get("dye_scale"))
+    raw_dye = dye.copy() if keep_intensities else None
+    scale = _dye_scale(dye_labels, combinatorial.get("dye_scale"))
+    dye = dye * scale
     total = dye.sum(axis=2, keepdims=True)
     median_total = _brightness_reference(total, combinatorial.get("brightness_regions"))
     relative_brightness = total / np.clip(median_total, 1.0, None)
@@ -351,12 +429,40 @@ def do_frac_call(df_bases, cycles=12, combinatorial=None):
         raise ValueError(
             f"combinatorial.ambiguous_call must be 'N' or 'nearest', got {ambiguous_call!r}."
         )
+    tied = (distance == chosen_distance[:, :, None]).sum(axis=2) > 1
     if ambiguous_call == "N":
-        tied = (distance == chosen_distance[:, :, None]).sum(axis=2) > 1
         called_bases = np.where(tied, "N", called_bases)
         quality_scores = np.where(tied, 0.0, quality_scores)
         barcodes = ["".join(row) for row in called_bases]
-    return _format_combinatorial_reads(df_bases, cycles, barcodes, quality_scores)
+
+    trace = None
+    if keep_intensities:
+        cycle_labels = sorted(set(df_bases[CYCLE]))
+        brightref = np.broadcast_to(median_total, total.shape)
+        cols = {}
+        for ci, c in enumerate(cycle_labels):
+            for di, d in enumerate(dye_labels):
+                cols[f"intensity_C{c}_{d}"] = raw_dye[:, ci, di]
+                cols[f"scaled_C{c}_{d}"] = dye[:, ci, di]
+            cols[f"total_C{c}"] = total[:, ci, 0]
+            cols[f"brightref_C{c}"] = brightref[:, ci, 0]
+            cols[f"relbright_C{c}"] = relative_brightness[:, ci, 0]
+            cols[f"bright_C{c}"] = bright[:, ci, 0]
+            for di, d in enumerate(dye_labels):
+                cols[f"fraction_C{c}_{d}"] = dye_fraction[:, ci, di]
+                cols[f"on_C{c}_{d}"] = observed[:, ci, di]
+                cols[f"confidence_C{c}_{d}"] = confidence[:, ci, di]
+            cols[f"distance_C{c}"] = chosen_distance[:, ci]
+            cols[f"tied_C{c}"] = tied[:, ci]
+        n_reads = raw_dye.shape[0]
+        cols["frac_blank_threshold"] = np.full(n_reads, blank_threshold)
+        cols["frac_fraction_threshold"] = np.full(n_reads, fraction_threshold)
+        for di, d in enumerate(dye_labels):
+            cols[f"frac_dye_scale_{d}"] = np.full(n_reads, float(scale[di]))
+        trace = pd.DataFrame(cols)
+    return _format_combinatorial_reads(
+        df_bases, cycles, barcodes, quality_scores, trace=trace
+    )
 
 
 def do_merfish_call(df_bases, cycles=12, combinatorial=None, codebook=None):
@@ -497,8 +603,11 @@ def _combinatorial_setup(df_bases, combinatorial):
     return values[:, :, dye_columns], dye_labels, base_chars, templates
 
 
-def _format_combinatorial_reads(df_bases, cycles, barcodes, quality_scores):
-    """Return combinatorial calls using the standard ``call_reads`` schema."""
+def _format_combinatorial_reads(df_bases, cycles, barcodes, quality_scores, trace=None):
+    """Return combinatorial calls using the standard ``call_reads`` schema.
+
+    ``trace`` (optional, one row per read in the same order) is appended as columns.
+    """
     df_reads = df_bases.drop_duplicates([WELL, TILE, READ]).copy()
     df_reads[BARCODE] = np.asarray(barcodes)
     for cycle in range(cycles):
@@ -517,7 +626,12 @@ def _format_combinatorial_reads(df_bases, cycles, barcodes, quality_scores):
             .fillna(0.0)
             .to_numpy()
         )
-    return df_reads.drop([CYCLE, CHANNEL, INTENSITY], axis=1)
+    df_reads = df_reads.drop([CYCLE, CHANNEL, INTENSITY], axis=1)
+    if trace is not None:
+        # df_reads rows are the reads in sorted df_bases order, as are dataframe_to_values rows
+        trace.index = df_reads.index
+        df_reads = pd.concat([df_reads, trace], axis=1)
+    return df_reads
 
 
 def _get_dye_channels(value):
@@ -639,7 +753,7 @@ def transform_percentiles(X):
     return Y, W
 
 
-def call_barcodes(df_bases, Y, cycles=12, channels=4):
+def call_barcodes(df_bases, Y, cycles=12, channels=4, keep_intensities=False):
     """Assign barcode sequences to reads based on the transformed base signal obtained from sequencing data.
 
     Args:
@@ -647,6 +761,10 @@ def call_barcodes(df_bases, Y, cycles=12, channels=4):
         Y (numpy array): Transformed base signal reshaped into a suitable format for the calling process.
         cycles (int): Number of sequencing cycles.
         channels (int): Number of sequencing channels.
+        keep_intensities (bool): If True, keep the per-cycle per-channel values the call
+            was made from as `intensity_C{cycle}_{base}` (input to the correction) and
+            `corrected_C{cycle}_{base}` (Y, the array `argmax` is taken over). These are
+            otherwise discarded with the CYCLE/CHANNEL/INTENSITY columns below.
 
     Returns:
         df_reads (pandas DataFrame): DataFrame with assigned barcode sequences and quality scores for each read.
@@ -673,6 +791,18 @@ def call_barcodes(df_bases, Y, cycles=12, channels=4):
 
     # Assign minimum quality score for each read
     df_reads = df_reads.assign(Q_min=lambda x: x.filter(regex=r"Q_\d+").min(axis=1))
+
+    # Optionally keep the values the base call was actually made from. df_reads has one
+    # row per read, so the per-cycle per-channel values are widened into columns. Row
+    # order matches Y because both come from the same sorted df_bases.
+    if keep_intensities:
+        cycle_labels = sorted(set(df_bases[CYCLE]))
+        X_in = dataframe_to_values(df_bases).reshape(-1, cycles, channels)
+        Y_out = Y.reshape(-1, cycles, channels)
+        for ci, cycle_label in enumerate(cycle_labels):
+            for bi, base in enumerate(bases):
+                df_reads["intensity_C%s_%s" % (cycle_label, base)] = X_in[:, ci, bi]
+                df_reads["corrected_C%s_%s" % (cycle_label, base)] = Y_out[:, ci, bi]
 
     # Drop unnecessary columns
     df_reads = df_reads.drop([CYCLE, CHANNEL, INTENSITY], axis=1)
